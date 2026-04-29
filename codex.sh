@@ -42,7 +42,7 @@ export CODEX_HOME="${CODEX_HOME:-$ROOT/.codex-home}"
 usage() {
   cat <<'TXT'
 Usage:
-  bash codex.sh              # discuss once (if unlocked), then continuous exec loop
+  bash codex.sh              # only run interactive discuss phase (default)
   bash codex.sh discuss      # only run interactive discuss phase
   bash codex.sh run          # only run continuous exec phase
   bash codex.sh status       # show harness status
@@ -145,16 +145,19 @@ TXT
 
 2) 选择一个当前最高优先级且 passes=false 的 feature 实现。
 3) 完成后执行必要验证（测试/构建/启动/静态检查中与改动最相关的一组）。
-4) 仅在验证通过后，将该 feature 的 passes 改为 true。
-5) 更新 .harness/state/codex-progress.md，记录：本轮改动、验证结果、下一步、阻塞点。
-6) 如果阻塞，明确记录阻塞原因和建议，不要伪完成。
-7) 保持每轮改动小、可回滚、可继续。
-8) 如果需要人类决策：
+4) 验证通过后，必须执行 git add -A 和 git commit，提交信息格式：
+   - feat(<feature-id>): <feature-title>
+   - 如果不是新功能，也可用 fix/chore，但必须包含本轮 feature id
+5) 仅在验证通过且 commit 成功后，将该 feature 的 passes 改为 true。
+6) 更新 .harness/state/codex-progress.md，记录：本轮改动、验证结果、提交哈希、下一步、阻塞点。
+7) 如果阻塞，明确记录阻塞原因和建议，不要伪完成。
+8) 保持每轮改动小、可回滚、可继续。
+9) 如果需要人类决策：
    - 将 .harness/state/decisions-needed.md 写成 status: pending
    - 在 items 下列出决策问题、可选项、推荐项
    - 输出标记词 DECISION_REQUIRED
    - 本轮停止继续实现，等待人类输入
-9) 不要修改以下 harness 文件：
+10) 不要修改以下 harness 文件：
    - codex.sh
    - .harness/prompts/discuss.md
    - .harness/prompts/run.md
@@ -174,6 +177,36 @@ extract_thread_id_from_log() {
 is_retryable_error() {
   local log_file="$1"
   grep -Eqi 'rate[ -]?limit|insufficient[_ ]quota|quota|429|network error|stream disconnected|temporar|timeout|overloaded|reconnecting' "$log_file"
+}
+
+auto_commit_iteration() {
+  local iteration="$1"
+  local has_changes=1
+
+  if [[ -z "$(git -C "$ROOT" status --porcelain)" ]]; then
+    has_changes=0
+  fi
+
+  local ts msg
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  msg="chore(harness): checkpoint iteration $iteration @ $ts"
+
+  if [[ "$has_changes" -eq 1 ]]; then
+    git -C "$ROOT" add -A
+    if git -C "$ROOT" commit -m "$msg" >/dev/null; then
+      log "auto-commit succeeded: $msg"
+      return 0
+    fi
+  else
+    if git -C "$ROOT" commit --allow-empty -m "$msg (empty)" >/dev/null; then
+      log "auto-commit succeeded (empty): $msg"
+      return 0
+    fi
+  fi
+
+
+  log "auto-commit failed"
+  return 1
 }
 
 extract_retry_after_seconds() {
@@ -318,7 +351,9 @@ run_exec_iteration() {
   log "log file: $log_file"
 
   local -a cmd
-  cmd=(codex exec --json -C "$ROOT" -m "$MODEL" -s "$SANDBOX" -a "$APPROVAL")
+  # NOTE: `codex exec` does not support `-a/--ask-for-approval`.
+  # Approval policy for exec should be managed via Codex config/profiles.
+  cmd=(codex exec --json -C "$ROOT" -m "$MODEL" -s "$SANDBOX")
   if [[ "$ENABLE_SEARCH" == "1" ]]; then
     cmd+=(--search)
   fi
@@ -340,11 +375,6 @@ run_exec_iteration() {
     return 30
   fi
 
-  if all_features_passed; then
-    log "all features passed"
-    return 100
-  fi
-
   if [[ "$DECISION_GATE" == "1" ]]; then
     if decision_marker_in_log "$log_file" && ! is_decision_pending; then
       seed_decision_file_from_log "$log_file"
@@ -357,6 +387,15 @@ run_exec_iteration() {
   fi
 
   if [[ "$rc" -eq 0 ]]; then
+    if ! auto_commit_iteration "$iteration"; then
+      return 1
+    fi
+
+    if all_features_passed; then
+      log "all features passed"
+      return 100
+    fi
+
     log "iteration succeeded"
     return 0
   fi
@@ -473,7 +512,7 @@ show_status() {
 }
 
 main() {
-  local mode="${1:-all}"
+  local mode="${1:-discuss}"
 
   require_cmd codex
   require_cmd jq
@@ -484,8 +523,8 @@ main() {
 
   case "$mode" in
     all)
-      run_discuss_phase
-      run_exec_loop
+      echo "mode 'all' is disabled. Use: bash codex.sh discuss, then bash codex.sh run" >&2
+      exit 1
       ;;
     discuss)
       run_discuss_phase
