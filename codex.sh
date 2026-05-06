@@ -38,7 +38,15 @@ PROTECTED_FILES="${PROTECTED_FILES:-codex.sh .harness/prompts/discuss.md .harnes
 PROTECT_BASELINE_FILE="${PROTECT_BASELINE_FILE:-$STATE_DIR/harness-protected.snapshot}"
 PROTECT_ALERT_FILE="${PROTECT_ALERT_FILE:-$STATE_DIR/harness-protect-alert.md}"
 
-export CODEX_HOME="${CODEX_HOME:-$ROOT/.codex-home}"
+if [[ -n "${CODEX_HOME:-}" ]]; then
+  export CODEX_HOME
+elif [[ -d "$ROOT/.codex-home" ]] && [[ -n "$(find "$ROOT/.codex-home" -mindepth 1 -maxdepth 1 2>/dev/null)" ]]; then
+  # Reuse repository-local Codex home only when it already contains state.
+  export CODEX_HOME="$ROOT/.codex-home"
+else
+  # Fall back to the user's default Codex home so existing login can be reused.
+  export CODEX_HOME="$HOME/.codex"
+fi
 
 usage() {
   cat <<'TXT'

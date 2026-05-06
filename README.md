@@ -109,7 +109,7 @@ DECISION_GATE=1
 HARNESS_PROTECT=1
 PROTECTED_FILES="codex.sh .harness/prompts/discuss.md .harness/prompts/run.md"
 
-CODEX_HOME=.codex-home
+CODEX_HOME=~/.codex
 ```
 
 ## 权限行为说明
@@ -118,6 +118,14 @@ CODEX_HOME=.codex-home
 - `APPROVAL=on-failure`（默认）：先自动执行，失败后再请求你授权。
 - `APPROVAL=on-request`：模型可主动请求你审批。
 - `APPROVAL=never`：不请求审批（风险最高）。
+
+## 登录行为说明
+
+- `codex.sh` 会按如下顺序决定 `CODEX_HOME`：
+  1. 你显式设置的 `CODEX_HOME`
+  2. 仓库内非空 `.codex-home`
+  3. `~/.codex`（默认）
+- 如果你在终端已登录 Codex，通常会复用 `~/.codex`，不会再次强制登录。
 
 ## 决策门控（Decision Gate）
 
